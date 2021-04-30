@@ -1,0 +1,26 @@
+version: "3.9"
+   
+services:
+  web:
+    image: nginxhbg:v0.2
+    depends_on:
+      - django
+      - quasar
+    ports:
+      - "8081:80"
+  quasar:
+    image: quasarhbg:v0.1
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./portal:/portal
+    command: /bin/sh -c "quasar dev"
+  django:
+    image: djangohbg:v0.2
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./django/:/code
+    environment:
+      - MONGODBSRV=mongodb+srv://dev:EIYvNadfBtVQ4PHh@users.y9l9r.mongodb.net/HBGPortal?retryWrites=true&w=majority
+    ports:
+      - "8000:8000"

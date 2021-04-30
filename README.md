@@ -1,2 +1,2 @@
 # hbgportal
-Heartbeat Games - Quasar, FastAPI
+VueJS and Django based Heartbeat Games portal

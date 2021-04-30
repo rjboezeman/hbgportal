@@ -1,0 +1,11 @@
+fastapi[all]
+mongoengine
+bson
+typing
+pydantic
+motor
+python-multipart
+python-jose
+passlib
+bcrypt
+fastapi-jwt-auth

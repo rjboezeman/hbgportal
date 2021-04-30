@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = {extras = ["all"], version = "*"}
+mongoengine = "*"
+bson = "*"
+typing = "*"
+pydantic = "*"
+motor = "*"
+python-multipart = "*"
+python-jose = "*"
+passlib = "*"
+bcrypt = "*"
+fastapi-jwt-auth = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.7"
