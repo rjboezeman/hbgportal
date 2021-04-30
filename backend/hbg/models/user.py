@@ -4,6 +4,7 @@ from fastapi import FastAPI, APIRouter, Body, status, HTTPException, Depends, Re
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi_jwt_auth import AuthJWT
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field, EmailStr
 from datetime import datetime, timedelta
@@ -14,17 +15,19 @@ from passlib.exc import UnknownHashError
 from pymongo.errors import *
 from random import randint
 
+from fastapi_jwt_auth.exceptions import JWTDecodeError
+
 from hbg.config import Settings
 from hbg.models.utils import PyObjectId, checkName, passwordStrengthOK
-from hbg.models.oauth2passwordbearerwithcookie import OAuth2PasswordBearerWithCookie
+#from hbg.models.oauth2passwordbearerwithcookie import OAuth2PasswordBearerWithCookie
 from hbg.db.mongo import db, userCollection
 from hbg.logging import logger
 
 settings = Settings()
 router = APIRouter()
 
-#oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/user/token")
-oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/user/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/user/token")
+#oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/user/token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password, hashed_password):
@@ -117,7 +120,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         return encoded_jwt
 
 @router.post("/token")
-async def token(form_data: OAuth2PasswordRequestForm = Depends()):
+async def token(form_data: OAuth2PasswordRequestForm = Depends(), Authorize: AuthJWT = Depends() ):
     try:
         userDb = await db[userCollection].find_one({"username": form_data.username})
         if userDb is None:
@@ -131,12 +134,17 @@ async def token(form_data: OAuth2PasswordRequestForm = Depends()):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Too many password attempts, account blocked temporarily")
             if verify_password(form_data.password, userDb["password"]):
                 await db[userCollection].update_one({"username": form_data.username}, { "$set": { "failed_logins": 0, "last_login": datetime.utcnow() }} )
-                access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-                access_token = create_access_token(
-                    data={"username": form_data.username}, expires_delta=access_token_expires
-                )
+                
+                # access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+                # access_token = create_access_token(
+                #     data={"username": form_data.username}, expires_delta=access_token_expires
+                # )
+                # Create the tokens and passing to set_access_cookies or set_refresh_cookies
+                access_token = Authorize.create_access_token(subject=form_data.username)
+                #refresh_token = Authorize.create_refresh_token(subject=form_data.username)
                 response = JSONResponse(status_code=status.HTTP_200_OK, content={"detail": "Login successful"})
-                response.set_cookie(key="access_token",value=f"Bearer {access_token}", httponly=True)
+                Authorize.set_access_cookies(access_token, response)
+                #Authorize.set_refresh_cookies(refresh_token, response)
                 return response
             else:
                 updateResult = await db[userCollection].update_one({"username": form_data.username}, {"$inc": { "failed_logins": 1 }, "$set": { "last_failed_login": datetime.utcnow()} })
@@ -149,24 +157,39 @@ async def token(form_data: OAuth2PasswordRequestForm = Depends()):
         if not hashed_password == user.hashed_password:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+# @router.post('/refresh')
+# def refresh(Authorize: AuthJWT = Depends()):
+#     Authorize.jwt_refresh_token_required()
+
+#     current_user = Authorize.get_jwt_subject()
+#     new_access_token = Authorize.create_access_token(subject=current_user)
+#     # Set the JWT cookies in the response
+#     response = JSONResponse(status_code=status.HTTP_200_OK, content={"detail": "The token has been refreshed"})
+#     Authorize.set_access_cookies(new_access_token, response)
+#     return response
+
+async def get_current_user(request: Request, Authorize: AuthJWT = Depends()):
         credentials_exception = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
                 headers={"WWW-Authenticate": "Bearer"},
         )
         try:
-                payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-                #logger.info(f"payload: {str(payload)}")
-                username: str = payload.get("username")
-                if username is None:
-                        raise credentials_exception
-                user = await db[userCollection].find_one({"username": username})
-                if user is None:
-                    logger.warning(f"Token with unknown username: {username}")
-                    raise credentials_exception
-                # user.pop('password', None), no longer needed
-                return UserDbModel(**user)
+            #payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            #logger.info(f"payload: {str(payload)}")
+            #username: str = payload.get("username")
+            Authorize.jwt_required(auth_from=request)
+            logger.info(f"We did get here though: {str(request.cookies)}")
+            username = Authorize.get_jwt_subject() ### CONTINUE HERE!! It returns None...
+            logger.info(f"Username: {username}")
+            if username is None:
+                raise credentials_exception
+            user = await db[userCollection].find_one({"username": username})
+            if user is None:
+                logger.warning(f"Token with unknown username: {username}")
+                raise credentials_exception
+            # user.pop('password', None), no longer needed
+            return UserDbModel(**user)
         except jwt.ExpiredSignatureError as e:
             logger.warning(f"Token has expired: {str(e)}")
             raise credentials_exception
@@ -252,3 +275,14 @@ async def get_user(username: str):
         logger.error(f"Unknown database error ({str(type(e).__name__)}): {str(e)}")
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={ "detail": f"Sorry, service unavailable" })
 
+@router.delete('/logout')
+def logout(Authorize: AuthJWT = Depends()):
+    """
+    Because the JWT are stored in an httponly cookie now, we cannot
+    log the user out by simply deleting the cookies in the frontend.
+    We need the backend to send us a response to delete the cookies.
+    """
+    Authorize.jwt_required()
+
+    Authorize.unset_jwt_cookies()
+    return {"msg":"Successfully logout"}

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
   authjwt_cookie_csrf_protect: bool = True # Enable/disable CSRF Protection. default is True
   authjwt_cookie_samesite: str = 'none' # Change to 'lax' in production to make your website more secure from CSRF Attacks, default is None
   authjwt_cookie_secure: bool = False # If the secure flag is True cookie can only be transmitted securely over HTTPS. For production set to True
-  authjwt_access_token_expires: int = 1  # in minutes
+  authjwt_access_token_expires: int = 30  # in minutes
 
   ACCESS_TOKEN_EXPIRE_MINUTES: int = 1
   ALGORITHM: str = "HS256"
